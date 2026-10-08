@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/pdf_item.dart';
 
 class StorageService {
@@ -11,6 +12,7 @@ class StorageService {
   StorageService._internal();
 
   static const String _metadataFilename = 'recent_pdfs.json';
+  static const String _prefIntroSeen = 'intro_banner_seen_v1';
 
   Future<Directory> getAppPdfDirectory() async {
     final appDir = await getApplicationDocumentsDirectory();
@@ -63,6 +65,47 @@ class StorageService {
     await file.writeAsString(PdfItem.encodeList(items));
   }
 
+  Future<PdfItem?> renamePdfItem(String id, String newName) async {
+    var sanitizedName = newName.trim();
+    if (sanitizedName.isEmpty) return null;
+
+    if (!sanitizedName.toLowerCase().endsWith('.pdf')) {
+      sanitizedName = '$sanitizedName.pdf';
+    }
+
+    final items = await getRecentPdfs();
+    final index = items.indexWhere((i) => i.id == id);
+    if (index == -1) return null;
+
+    final oldItem = items[index];
+    final oldFile = File(oldItem.path);
+
+    if (!await oldFile.exists()) return null;
+
+    final targetDir = oldFile.parent;
+    final newPath = p.join(targetDir.path, sanitizedName);
+
+    if (newPath != oldItem.path) {
+      final newFile = await oldFile.rename(newPath);
+      final updatedItem = PdfItem(
+        id: oldItem.id,
+        filename: sanitizedName,
+        path: newFile.path,
+        createdAt: oldItem.createdAt,
+        pageCount: oldItem.pageCount,
+        fileSizeBytes: await newFile.length(),
+        thumbnailPath: oldItem.thumbnailPath,
+      );
+
+      items[index] = updatedItem;
+      final file = await _getMetadataFile();
+      await file.writeAsString(PdfItem.encodeList(items));
+      return updatedItem;
+    }
+
+    return oldItem;
+  }
+
   Future<void> deletePdfItem(String id) async {
     final items = await getRecentPdfs();
     final targetIndex = items.indexWhere((i) => i.id == id);
@@ -88,7 +131,7 @@ class StorageService {
 
   Future<String> generateFilename(DateTime date) async {
     final dateStr = DateFormat('yyyy-MM-dd').format(date);
-    final prefix = 'PaperLink_$dateStr';
+    final prefix = 'PaperLink_Document_$dateStr';
 
     final items = await getRecentPdfs();
     int highestSeq = 0;
@@ -111,5 +154,15 @@ class StorageService {
 
     final nextSeq = (highestSeq + 1).toString().padLeft(3, '0');
     return '${prefix}_$nextSeq.pdf';
+  }
+
+  Future<bool> hasSeenIntro() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_prefIntroSeen) ?? false;
+  }
+
+  Future<void> dismissIntro() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefIntroSeen, true);
   }
 }

@@ -19,11 +19,22 @@ class _HomeScreenState extends State<HomeScreen> {
   final StorageService _storageService = StorageService();
   List<PdfItem> _recentPdfs = [];
   bool _isLoading = true;
+  bool _showIntroBanner = true;
 
   @override
   void initState() {
     super.initState();
-    _loadRecentPdfs();
+    _initData();
+  }
+
+  Future<void> _initData() async {
+    final seen = await _storageService.hasSeenIntro();
+    if (mounted) {
+      setState(() {
+        _showIntroBanner = !seen;
+      });
+    }
+    await _loadRecentPdfs();
   }
 
   Future<void> _loadRecentPdfs() async {
@@ -37,12 +48,64 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _dismissIntro() async {
+    await _storageService.dismissIntro();
+    if (mounted) {
+      setState(() {
+        _showIntroBanner = false;
+      });
+    }
+  }
+
+  Future<void> _renamePdf(PdfItem item) async {
+    final controller = TextEditingController(text: item.filename);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename PDF'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Filename',
+            suffixText: '.pdf',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx, controller.text);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (newName != null && newName.trim().isNotEmpty) {
+      final updated = await _storageService.renamePdfItem(item.id, newName);
+      if (updated != null) {
+        _loadRecentPdfs();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Renamed to ${updated.filename}')),
+          );
+        }
+      }
+    }
+  }
+
   Future<void> _deletePdf(PdfItem item) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete PDF?'),
-        content: Text('Are you sure you want to delete "${item.filename}"?'),
+        content: Text('Are you sure you want to permanently delete "${item.filename}"?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -59,6 +122,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (confirmed == true) {
       await _storageService.deletePdfItem(item.id);
       _loadRecentPdfs();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('PDF deleted from device.')),
+        );
+      }
     }
   }
 
@@ -119,39 +187,75 @@ class _HomeScreenState extends State<HomeScreen> {
           color: AppTheme.primaryGreen,
           child: Column(
             children: [
-              // Header & Primary Action Hero Area
+              // Lightweight First-Launch Introduction Banner
+              if (_showIntroBanner)
+                Container(
+                  margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppTheme.cardLight,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.borderLight),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.bolt, color: AppTheme.primaryGreen, size: 20),
+                              SizedBox(width: 6),
+                              Text(
+                                'Quick & Simple PDF Utility',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                  color: AppTheme.textPrimary,
+                                ),
+                              ),
+                            ],
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 18, color: AppTheme.textSecondary),
+                            onPressed: _dismissIntro,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        '• Turn photos or camera snaps into PDFs\n• Auto-crop & clean document pages\n• Share instantly via WhatsApp & native share',
+                        style: TextStyle(fontSize: 13, height: 1.4, color: AppTheme.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Unmistakable Hero Action Section
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-                decoration: const BoxDecoration(
-                  color: AppTheme.backgroundLight,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Convert photos to PDF instantly.',
+                      'Turn photos into clean PDFs instantly.',
                       style: TextStyle(
-                        fontSize: 22,
+                        fontSize: 20,
                         fontWeight: FontWeight.w800,
                         color: AppTheme.textPrimary,
                         letterSpacing: -0.5,
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Select or take photos, adjust pages, and share directly to WhatsApp.',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: AppTheme.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
 
                     // Primary Button: "Create PDF"
                     ElevatedButton.icon(
                       onPressed: _openCreatePdf,
-                      icon: const Icon(Icons.add_circle_outline, size: 22),
+                      icon: const Icon(Icons.add_circle_outline, size: 24),
                       label: const Text('Create PDF'),
                     ),
                   ],
@@ -160,9 +264,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
               const Divider(height: 1, color: AppTheme.borderLight),
 
-              // Recent PDFs Header
+              // Recent PDFs Section Header
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -186,7 +290,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              // Recent PDFs List / Empty State
+              // Recent PDFs List / Clean Empty State
               Expanded(
                 child: _isLoading
                     ? const Center(
@@ -196,7 +300,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ? ListView(
                             padding: const EdgeInsets.all(20),
                             children: [
-                              const SizedBox(height: 40),
+                              const SizedBox(height: 30),
                               Center(
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -215,7 +319,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                                     const SizedBox(height: 16),
                                     const Text(
-                                      'No recent PDFs yet',
+                                      'No PDFs created yet',
                                       style: TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.w600,
@@ -224,7 +328,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                                     const SizedBox(height: 6),
                                     const Text(
-                                      'PDFs created locally on your device will appear here.',
+                                      'Tap "Create PDF" above to convert your first document.',
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
                                         fontSize: 13,
@@ -308,9 +412,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                     icon: const Icon(Icons.more_vert, color: AppTheme.textSecondary),
                                     onSelected: (val) {
                                       if (val == 'share') {
-                                        ShareService.sharePdf(pdf.path, filename: pdf.filename);
+                                        ShareService.sharePdf(
+                                          pdf.path,
+                                          filename: pdf.filename,
+                                          context: context,
+                                        );
                                       } else if (val == 'open') {
-                                        ShareService.openPdf(pdf.path);
+                                        ShareService.openPdf(pdf.path, context: context);
+                                      } else if (val == 'rename') {
+                                        _renamePdf(pdf);
                                       } else if (val == 'delete') {
                                         _deletePdf(pdf);
                                       }
@@ -333,6 +443,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                             Icon(Icons.open_in_new, size: 18),
                                             SizedBox(width: 8),
                                             Text('Open External'),
+                                          ],
+                                        ),
+                                      ),
+                                      const PopupMenuItem(
+                                        value: 'rename',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.edit_note, size: 18),
+                                            SizedBox(width: 8),
+                                            Text('Rename'),
                                           ],
                                         ),
                                       ),
