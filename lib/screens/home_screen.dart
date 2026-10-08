@@ -2,11 +2,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/pdf_item.dart';
+import '../services/entitlement_service.dart';
 import '../services/share_service.dart';
 import '../services/storage_service.dart';
+import '../services/usage_service.dart';
 import '../theme/app_theme.dart';
 import 'add_pages_screen.dart';
 import 'pdf_result_screen.dart';
+import 'pro_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -17,6 +20,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final StorageService _storageService = StorageService();
+  final UsageService _usageService = UsageService();
+  final EntitlementService _entitlementService = EntitlementService();
+
   List<PdfItem> _recentPdfs = [];
   bool _isLoading = true;
   bool _showIntroBanner = true;
@@ -24,10 +30,24 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _entitlementService.addListener(_onEntitlementUpdate);
     _initData();
   }
 
+  @override
+  void dispose() {
+    _entitlementService.removeListener(_onEntitlementUpdate);
+    super.dispose();
+  }
+
+  void _onEntitlementUpdate() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   Future<void> _initData() async {
+    await _usageService.init();
     final seen = await _storageService.hasSeenIntro();
     if (mounted) {
       setState(() {
@@ -141,6 +161,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openCreatePdf() async {
+    final canCreate = _usageService.canCreatePdf(isProUser: _entitlementService.isProUser);
+    if (!canCreate) {
+      await ProScreen.showPaywall(context, isLimitPaywall: true);
+      setState(() {});
+      return;
+    }
+
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -148,6 +175,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     _loadRecentPdfs();
+    setState(() {});
   }
 
   @override
@@ -174,6 +202,16 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: Icon(
+              _entitlementService.isProUser ? Icons.workspace_premium : Icons.workspace_premium_outlined,
+              color: _entitlementService.isProUser ? AppTheme.primaryGreen : AppTheme.textSecondary,
+            ),
+            tooltip: _entitlementService.isProUser ? 'PaperLink Pro (Active)' : 'Unlock PaperLink Pro',
+            onPressed: () {
+              ProScreen.showPaywall(context, isLimitPaywall: false);
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
@@ -250,6 +288,59 @@ class _HomeScreenState extends State<HomeScreen> {
                         letterSpacing: -0.5,
                       ),
                     ),
+                    const SizedBox(height: 8),
+
+                    // Usage status badge
+                    if (_entitlementService.isProUser)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryGreen.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.check_circle, size: 14, color: AppTheme.primaryGreen),
+                            SizedBox(width: 5),
+                            Text(
+                              'Pro • Unlimited PDFs',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.primaryGreen,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      GestureDetector(
+                        onTap: () => ProScreen.showPaywall(context, isLimitPaywall: false),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppTheme.cardLight,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: AppTheme.borderLight),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Free Plan: ${_usageService.getRemainingFreePdfs(isProUser: false)} of 5 left this month',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppTheme.textSecondary,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              const Icon(Icons.arrow_forward_ios, size: 10, color: AppTheme.textSecondary),
+                            ],
+                          ),
+                        ),
+                      ),
                     const SizedBox(height: 16),
 
                     // Primary Button: "Create PDF"

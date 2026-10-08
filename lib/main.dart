@@ -2,10 +2,18 @@ import 'package:flutter/material.dart';
 import 'screens/home_screen.dart';
 import 'theme/app_theme.dart';
 
-void main() {
+import 'services/entitlement_service.dart';
+import 'services/usage_service.dart';
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await UsageService().init();
+  unawaited(EntitlementService().initialize());
   runApp(const PaperLinkApp());
 }
+
+// Helper for fire-and-forget initialization
+void unawaited(Future<void> future) {}
 
 class PaperLinkApp extends StatelessWidget {
   const PaperLinkApp({super.key});

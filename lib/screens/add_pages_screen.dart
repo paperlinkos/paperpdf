@@ -1,12 +1,15 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/page_item.dart';
+import '../services/entitlement_service.dart';
 import '../services/image_service.dart';
 import '../services/pdf_service.dart';
+import '../services/usage_service.dart';
 import '../theme/app_theme.dart';
 import 'fast_camera_capture_screen.dart';
 import 'image_adjust_screen.dart';
 import 'pdf_result_screen.dart';
+import 'pro_screen.dart';
 
 class AddPagesScreen extends StatefulWidget {
   final List<PageItem> initialPages;
@@ -24,6 +27,9 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
   final List<PageItem> _pages = [];
   final ImageService _imageService = ImageService();
   final PdfService _pdfService = PdfService();
+  final UsageService _usageService = UsageService();
+  final EntitlementService _entitlementService = EntitlementService();
+
   PdfQualityPreset _selectedQuality = PdfQualityPreset.standard;
   bool _isGenerating = false;
 
@@ -174,15 +180,44 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
                       value: PdfQualityPreset.highQuality,
                       groupValue: _selectedQuality,
                       activeColor: AppTheme.primaryGreen,
-                      title: const Text('High Quality', style: TextStyle(fontWeight: FontWeight.bold)),
+                      title: Row(
+                        children: [
+                          const Text('High Quality', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const SizedBox(width: 8),
+                          if (!_entitlementService.isProUser)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppTheme.primaryGreen.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text(
+                                'PRO',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppTheme.primaryGreen,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                       subtitle: Text(
                         'Maximum readability • Estimated: ${PdfService.estimateFileSize(_pages.length, PdfQualityPreset.highQuality)}',
                         style: const TextStyle(fontSize: 12),
                       ),
-                      onChanged: (val) {
+                      onChanged: (val) async {
                         if (val != null) {
-                          setSheetState(() => _selectedQuality = val);
-                          setState(() => _selectedQuality = val);
+                          if (!_entitlementService.isProUser) {
+                            final unlocked = await ProScreen.showPaywall(context, isLimitPaywall: false);
+                            if (unlocked == true || _entitlementService.isProUser) {
+                              setSheetState(() => _selectedQuality = val);
+                              setState(() => _selectedQuality = val);
+                            }
+                          } else {
+                            setSheetState(() => _selectedQuality = val);
+                            setState(() => _selectedQuality = val);
+                          }
                         }
                       },
                     ),
@@ -244,6 +279,21 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
       return;
     }
 
+    // Check free monthly limit
+    final canCreate = _usageService.canCreatePdf(isProUser: _entitlementService.isProUser);
+    if (!canCreate) {
+      await ProScreen.showPaywall(context, isLimitPaywall: true);
+      return;
+    }
+
+    // Check if High Quality is requested by free user
+    if (_selectedQuality == PdfQualityPreset.highQuality && !_entitlementService.isProUser) {
+      final unlocked = await ProScreen.showPaywall(context, isLimitPaywall: false);
+      if (unlocked != true && !_entitlementService.isProUser) {
+        return;
+      }
+    }
+
     setState(() => _isGenerating = true);
 
     try {
@@ -251,6 +301,9 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
         pages: _pages,
         qualityPreset: _selectedQuality,
       );
+
+      // Record successful creation ONLY after PDF is successfully generated
+      await _usageService.recordSuccessfulPdfCreation(pdfId: pdfItem.id);
 
       if (!mounted) return;
       setState(() => _isGenerating = false);
