@@ -4,6 +4,7 @@ import '../models/page_item.dart';
 import '../services/entitlement_service.dart';
 import '../services/image_service.dart';
 import '../services/pdf_service.dart';
+import '../services/storage_service.dart';
 import '../services/usage_service.dart';
 import '../theme/app_theme.dart';
 import 'fast_camera_capture_screen.dart';
@@ -27,10 +28,12 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
   final List<PageItem> _pages = [];
   final ImageService _imageService = ImageService();
   final PdfService _pdfService = PdfService();
+  final StorageService _storageService = StorageService();
   final UsageService _usageService = UsageService();
   final EntitlementService _entitlementService = EntitlementService();
 
   PdfQualityPreset _selectedQuality = PdfQualityPreset.standard;
+  PdfPageOrientation _selectedOrientation = PdfPageOrientation.auto;
   bool _isGenerating = false;
 
   @override
@@ -125,9 +128,32 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
     );
   }
 
-  void _showQualitySelectionSheet() {
+  void _showExportPdfSheet() async {
+    if (_pages.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please add at least one image page.')),
+      );
+      return;
+    }
+
+    final canCreate = _usageService.canCreatePdf(isProUser: _entitlementService.isProUser);
+    if (!canCreate) {
+      await ProScreen.showPaywall(context, isLimitPaywall: true);
+      return;
+    }
+
+    final defaultFilename = await _storageService.generateFilename(DateTime.now());
+    final defaultBaseName = defaultFilename.endsWith('.pdf')
+        ? defaultFilename.substring(0, defaultFilename.length - 4)
+        : defaultFilename;
+
+    final filenameController = TextEditingController(text: defaultBaseName);
+
+    if (!mounted) return;
+
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: AppTheme.backgroundLight,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -135,102 +161,177 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            return SafeArea(
-              child: Container(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'PDF Quality & Size',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Choose output quality preset for your PDF:',
-                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Standard Quality Radio
-                    RadioListTile<PdfQualityPreset>(
-                      value: PdfQualityPreset.standard,
-                      groupValue: _selectedQuality,
-                      activeColor: AppTheme.primaryGreen,
-                      title: const Text('Standard', style: TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text(
-                        'Smaller file size • Estimated: ${PdfService.estimateFileSize(_pages.length, PdfQualityPreset.standard)}',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      onChanged: (val) {
-                        if (val != null) {
-                          setSheetState(() => _selectedQuality = val);
-                          setState(() => _selectedQuality = val);
-                        }
-                      },
-                    ),
-
-                    // High Quality Radio
-                    RadioListTile<PdfQualityPreset>(
-                      value: PdfQualityPreset.highQuality,
-                      groupValue: _selectedQuality,
-                      activeColor: AppTheme.primaryGreen,
-                      title: Row(
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+              ),
+              child: SafeArea(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text('High Quality', style: TextStyle(fontWeight: FontWeight.bold)),
-                          const SizedBox(width: 8),
-                          if (!_entitlementService.isProUser)
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: AppTheme.primaryGreen.withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: const Text(
-                                'PRO',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppTheme.primaryGreen,
-                                ),
-                              ),
+                          const Text(
+                            'Export PDF Settings',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.textPrimary,
                             ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, color: AppTheme.textSecondary),
+                            onPressed: () => Navigator.pop(ctx),
+                          ),
                         ],
                       ),
-                      subtitle: Text(
-                        'Maximum readability • Estimated: ${PdfService.estimateFileSize(_pages.length, PdfQualityPreset.highQuality)}',
-                        style: const TextStyle(fontSize: 12),
+                      const SizedBox(height: 12),
+
+                      // Filename Section
+                      const Text(
+                        'PDF Filename',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.textPrimary),
                       ),
-                      onChanged: (val) async {
-                        if (val != null) {
-                          if (!_entitlementService.isProUser) {
-                            final unlocked = await ProScreen.showPaywall(context, isLimitPaywall: false);
-                            if (unlocked == true || _entitlementService.isProUser) {
-                              setSheetState(() => _selectedQuality = val);
-                              setState(() => _selectedQuality = val);
-                            }
-                          } else {
+                      const SizedBox(height: 6),
+                      TextField(
+                        controller: filenameController,
+                        decoration: const InputDecoration(
+                          hintText: 'Enter document name',
+                          suffixText: '.pdf',
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Orientation Section
+                      const Text(
+                        'Page Orientation',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.textPrimary),
+                      ),
+                      const SizedBox(height: 6),
+                      SizedBox(
+                        width: double.infinity,
+                        child: SegmentedButton<PdfPageOrientation>(
+                          segments: const [
+                            ButtonSegment<PdfPageOrientation>(
+                              value: PdfPageOrientation.auto,
+                              label: Text('Auto'),
+                              icon: Icon(Icons.auto_awesome, size: 16),
+                            ),
+                            ButtonSegment<PdfPageOrientation>(
+                              value: PdfPageOrientation.portrait,
+                              label: Text('Portrait'),
+                              icon: Icon(Icons.crop_portrait, size: 16),
+                            ),
+                            ButtonSegment<PdfPageOrientation>(
+                              value: PdfPageOrientation.landscape,
+                              label: Text('Landscape'),
+                              icon: Icon(Icons.crop_landscape, size: 16),
+                            ),
+                          ],
+                          selected: {_selectedOrientation},
+                          onSelectionChanged: (Set<PdfPageOrientation> newSelection) {
+                            setSheetState(() => _selectedOrientation = newSelection.first);
+                            setState(() => _selectedOrientation = newSelection.first);
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _selectedOrientation == PdfPageOrientation.auto
+                            ? 'Auto selects best orientation per page based on image aspect ratio.'
+                            : (_selectedOrientation == PdfPageOrientation.portrait
+                                ? 'Forces all pages into vertical A4 format.'
+                                : 'Forces all pages into horizontal A4 format.'),
+                        style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Quality Section
+                      const Text(
+                        'PDF Quality & Size',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.textPrimary),
+                      ),
+                      const SizedBox(height: 6),
+                      RadioListTile<PdfQualityPreset>(
+                        value: PdfQualityPreset.standard,
+                        groupValue: _selectedQuality,
+                        activeColor: AppTheme.primaryGreen,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Standard', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        subtitle: Text(
+                          'Smaller file size • Estimated: ${PdfService.estimateFileSize(_pages.length, PdfQualityPreset.standard)}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        onChanged: (val) {
+                          if (val != null) {
                             setSheetState(() => _selectedQuality = val);
                             setState(() => _selectedQuality = val);
                           }
-                        }
-                      },
-                    ),
+                        },
+                      ),
+                      RadioListTile<PdfQualityPreset>(
+                        value: PdfQualityPreset.highQuality,
+                        groupValue: _selectedQuality,
+                        activeColor: AppTheme.primaryGreen,
+                        contentPadding: EdgeInsets.zero,
+                        title: Row(
+                          children: [
+                            const Text('High Quality', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                            const SizedBox(width: 8),
+                            if (!_entitlementService.isProUser)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primaryGreen.withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Text(
+                                  'PRO',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppTheme.primaryGreen,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        subtitle: Text(
+                          'Maximum readability • Estimated: ${PdfService.estimateFileSize(_pages.length, PdfQualityPreset.highQuality)}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        onChanged: (val) async {
+                          if (val != null) {
+                            if (!_entitlementService.isProUser) {
+                              final unlocked = await ProScreen.showPaywall(context, isLimitPaywall: false);
+                              if (unlocked == true || _entitlementService.isProUser) {
+                                setSheetState(() => _selectedQuality = val);
+                                setState(() => _selectedQuality = val);
+                              }
+                            } else {
+                              setSheetState(() => _selectedQuality = val);
+                              setState(() => _selectedQuality = val);
+                            }
+                          }
+                        },
+                      ),
 
-                    const SizedBox(height: 16),
-                    ElevatedButton(
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        _generatePdf();
-                      },
-                      child: Text('Generate PDF (${PdfService.estimateFileSize(_pages.length, _selectedQuality)})'),
-                    ),
-                  ],
+                      const SizedBox(height: 20),
+                      ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _handlePdfExport(filenameController.text);
+                        },
+                        child: Text('Generate PDF (${_pages.length} ${_pages.length == 1 ? 'Page' : 'Pages'})'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -238,6 +339,51 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
         );
       },
     );
+  }
+
+  Future<void> _handlePdfExport(String inputFilename) async {
+    var sanitized = _storageService.sanitizeFilename(inputFilename);
+    if (sanitized.isEmpty) {
+      sanitized = await _storageService.generateFilename(DateTime.now());
+    }
+
+    bool overwrite = false;
+    final fileExists = await _storageService.pdfFileExists(sanitized);
+
+    if (fileExists && mounted) {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('File Already Exists'),
+          content: Text('A PDF named "$sanitized" already exists. How would you like to proceed?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'cancel'),
+              child: const Text('Cancel'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(ctx, 'unique'),
+              child: const Text('Keep Both (Auto-Rename)'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, 'overwrite'),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorRed),
+              child: const Text('Overwrite'),
+            ),
+          ],
+        ),
+      );
+
+      if (choice == 'cancel' || choice == null) {
+        return;
+      } else if (choice == 'overwrite') {
+        overwrite = true;
+      } else if (choice == 'unique') {
+        sanitized = await _storageService.getUniqueFilename(sanitized);
+      }
+    }
+
+    await _generatePdf(customFilename: sanitized, overwriteExisting: overwrite);
   }
 
   Future<void> _openAdjustScreen(int index) async {
@@ -271,7 +417,7 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
     });
   }
 
-  Future<void> _generatePdf() async {
+  Future<void> _generatePdf({String? customFilename, bool overwriteExisting = false}) async {
     if (_pages.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please add at least one image page.')),
@@ -279,14 +425,12 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
       return;
     }
 
-    // Check free monthly limit
     final canCreate = _usageService.canCreatePdf(isProUser: _entitlementService.isProUser);
     if (!canCreate) {
       await ProScreen.showPaywall(context, isLimitPaywall: true);
       return;
     }
 
-    // Check if High Quality is requested by free user
     if (_selectedQuality == PdfQualityPreset.highQuality && !_entitlementService.isProUser) {
       final unlocked = await ProScreen.showPaywall(context, isLimitPaywall: false);
       if (unlocked != true && !_entitlementService.isProUser) {
@@ -300,9 +444,11 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
       final pdfItem = await _pdfService.createPdf(
         pages: _pages,
         qualityPreset: _selectedQuality,
+        orientation: _selectedOrientation,
+        customFilename: customFilename,
+        overwriteExisting: overwriteExisting,
       );
 
-      // Record successful creation ONLY after PDF is successfully generated
       await _usageService.recordSuccessfulPdfCreation(pdfId: pdfItem.id);
 
       if (!mounted) return;
@@ -376,22 +522,22 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
               )
             : Column(
                 children: [
-                  // Quality Selector Bar
+                  // Settings Selector Bar
                   InkWell(
-                    onTap: _showQualitySelectionSheet,
+                    onTap: _showExportPdfSheet,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       color: AppTheme.cardLight,
                       child: Row(
                         children: [
-                          const Icon(Icons.high_quality, size: 18, color: AppTheme.primaryGreen),
+                          const Icon(Icons.settings_outlined, size: 18, color: AppTheme.primaryGreen),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  PdfService.getPresetLabel(_selectedQuality),
+                                  '${PdfService.getPresetLabel(_selectedQuality)} • ${PdfService.getOrientationLabel(_selectedOrientation)}',
                                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                                 ),
                                 Text(
@@ -407,7 +553,7 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
                     ),
                   ),
 
-                  // Reorderable Grid / List of pages
+                  // Reorderable List of pages
                   Expanded(
                     child: ReorderableListView.builder(
                       padding: const EdgeInsets.all(16),
@@ -497,7 +643,7 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
                     ),
                   ),
 
-                  // Bottom bar with Add More & Generate buttons
+                  // Bottom bar with Add More & Export PDF buttons
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: const BoxDecoration(
@@ -516,7 +662,7 @@ class _AddPagesScreenState extends State<AddPagesScreen> {
                         ),
                         const SizedBox(height: 12),
                         ElevatedButton(
-                          onPressed: _isGenerating ? null : _generatePdf,
+                          onPressed: _isGenerating ? null : _showExportPdfSheet,
                           child: _isGenerating
                               ? const SizedBox(
                                   height: 24,

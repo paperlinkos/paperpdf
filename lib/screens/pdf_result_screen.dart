@@ -32,7 +32,10 @@ class _PdfResultScreenState extends State<PdfResultScreen> {
   }
 
   Future<void> _renamePdf() async {
-    final controller = TextEditingController(text: _currentPdf.filename);
+    final baseName = _currentPdf.filename.endsWith('.pdf')
+        ? _currentPdf.filename.substring(0, _currentPdf.filename.length - 4)
+        : _currentPdf.filename;
+    final controller = TextEditingController(text: baseName);
     final newName = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(

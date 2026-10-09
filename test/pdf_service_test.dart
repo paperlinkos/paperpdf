@@ -68,6 +68,71 @@ void main() {
       expect(pdfItem.fileSizeBytes, greaterThan(0));
     });
 
+    test('Generates PDF with Auto, Portrait, and Landscape orientations', () async {
+      final portraitImg = await createDummyImageFile('port', width: 600, height: 900);
+      final landscapeImg = await createDummyImageFile('land', width: 1200, height: 800);
+
+      final pPage = PageItem(id: 'p1', originalPath: portraitImg, currentPath: portraitImg);
+      final lPage = PageItem(id: 'p2', originalPath: landscapeImg, currentPath: landscapeImg);
+
+      final pdfService = PdfService();
+
+      // Test Auto orientation
+      final pdfAuto = await pdfService.createPdf(
+        pages: [pPage, lPage],
+        orientation: PdfPageOrientation.auto,
+      );
+      expect(pdfAuto.pageCount, 2);
+      expect(File(pdfAuto.path).existsSync(), isTrue);
+
+      // Test Portrait orientation
+      final pdfPortrait = await pdfService.createPdf(
+        pages: [pPage, lPage],
+        orientation: PdfPageOrientation.portrait,
+      );
+      expect(pdfPortrait.pageCount, 2);
+      expect(File(pdfPortrait.path).existsSync(), isTrue);
+
+      // Test Landscape orientation
+      final pdfLandscape = await pdfService.createPdf(
+        pages: [pPage, lPage],
+        orientation: PdfPageOrientation.landscape,
+      );
+      expect(pdfLandscape.pageCount, 2);
+      expect(File(pdfLandscape.path).existsSync(), isTrue);
+    });
+
+    test('Generates PDF with custom filename and sanitizes input', () async {
+      final imgPath = await createDummyImageFile('doc', width: 600, height: 800);
+      final page = PageItem(id: 'p1', originalPath: imgPath, currentPath: imgPath);
+
+      final pdfService = PdfService();
+
+      // Custom filename without extension
+      final item1 = await pdfService.createPdf(
+        pages: [page],
+        customFilename: 'My Custom Invoice',
+      );
+      expect(item1.filename, 'My Custom Invoice.pdf');
+      expect(File(item1.path).existsSync(), isTrue);
+
+      // Duplicate custom filename without overwrite flag produces unique name
+      final item2 = await pdfService.createPdf(
+        pages: [page],
+        customFilename: 'My Custom Invoice',
+      );
+      expect(item2.filename, 'My Custom Invoice (1).pdf');
+      expect(File(item2.path).existsSync(), isTrue);
+
+      // Custom filename with invalid chars and double extension
+      final item3 = await pdfService.createPdf(
+        pages: [page],
+        customFilename: 'Report:2026/10?.pdf.pdf',
+      );
+      expect(item3.filename, 'Report_2026_10_.pdf');
+      expect(File(item3.path).existsSync(), isTrue);
+    });
+
     test('Generates PDF at scale: 5 pages, 10 pages, 20 pages', () async {
       final pdfService = PdfService();
 
@@ -86,6 +151,7 @@ void main() {
         final pdfItem = await pdfService.createPdf(
           pages: pages,
           qualityPreset: PdfQualityPreset.standard,
+          orientation: PdfPageOrientation.auto,
         );
 
         expect(pdfItem.pageCount, count);

@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
@@ -65,28 +64,88 @@ class StorageService {
     await file.writeAsString(PdfItem.encodeList(items));
   }
 
-  Future<PdfItem?> renamePdfItem(String id, String newName) async {
-    var sanitizedName = newName.trim();
-    if (sanitizedName.isEmpty) return null;
+  /// Sanitizes raw filename string: trims whitespace, strips invalid OS characters,
+  /// and ensures a single `.pdf` extension.
+  String sanitizeFilename(String rawName) {
+    var name = rawName.trim();
+    if (name.isEmpty) return '';
 
-    if (!sanitizedName.toLowerCase().endsWith('.pdf')) {
-      sanitizedName = '$sanitizedName.pdf';
+    // Strip/replace invalid filename characters across platforms: / \ : * ? " < > | \0
+    name = name.replaceAll(RegExp(r'[/\\:*?"<>|\x00-\x1F]'), '_');
+
+    // Handle repeated .pdf suffixes (e.g. "doc.pdf.pdf" -> "doc.pdf")
+    while (RegExp(r'\.pdf\.pdf$', caseSensitive: false).hasMatch(name)) {
+      name = name.substring(0, name.length - 4);
     }
+
+    // Append .pdf extension if not present (case-insensitive check)
+    if (!name.toLowerCase().endsWith('.pdf')) {
+      name = '$name.pdf';
+    }
+
+    return name;
+  }
+
+  /// Checks whether a PDF file with [filename] exists in physical storage or metadata.
+  Future<bool> pdfFileExists(String filename) async {
+    final sanitized = sanitizeFilename(filename);
+    if (sanitized.isEmpty) return false;
+
+    final targetDir = await getAppPdfDirectory();
+    final file = File(p.join(targetDir.path, sanitized));
+    if (await file.exists()) return true;
+
+    final items = await getRecentPdfs();
+    return items.any((item) => item.filename.toLowerCase() == sanitized.toLowerCase());
+  }
+
+  /// Generates a unique non-conflicting filename by appending `(1)`, `(2)`, etc. if needed.
+  Future<String> getUniqueFilename(String filename) async {
+    var sanitized = sanitizeFilename(filename);
+    if (sanitized.isEmpty) {
+      sanitized = await generateFilename(DateTime.now());
+    }
+
+    if (!await pdfFileExists(sanitized)) {
+      return sanitized;
+    }
+
+    final baseName = sanitized.substring(0, sanitized.length - 4);
+    int counter = 1;
+
+    while (true) {
+      final candidate = '$baseName ($counter).pdf';
+      if (!await pdfFileExists(candidate)) {
+        return candidate;
+      }
+      counter++;
+    }
+  }
+
+  Future<PdfItem?> renamePdfItem(String id, String newName, {bool overwrite = false}) async {
+    var sanitizedName = sanitizeFilename(newName);
+    if (sanitizedName.isEmpty) return null;
 
     final items = await getRecentPdfs();
     final index = items.indexWhere((i) => i.id == id);
     if (index == -1) return null;
 
     final oldItem = items[index];
-    final oldFile = File(oldItem.path);
+    if (oldItem.filename == sanitizedName) return oldItem;
 
+    final oldFile = File(oldItem.path);
     if (!await oldFile.exists()) return null;
 
     final targetDir = oldFile.parent;
-    final newPath = p.join(targetDir.path, sanitizedName);
+    var targetPath = p.join(targetDir.path, sanitizedName);
 
-    if (newPath != oldItem.path) {
-      final newFile = await oldFile.rename(newPath);
+    if (!overwrite && await File(targetPath).exists()) {
+      sanitizedName = await getUniqueFilename(sanitizedName);
+      targetPath = p.join(targetDir.path, sanitizedName);
+    }
+
+    if (targetPath != oldItem.path) {
+      final newFile = await oldFile.rename(targetPath);
       final updatedItem = PdfItem(
         id: oldItem.id,
         filename: sanitizedName,

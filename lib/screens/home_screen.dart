@@ -78,7 +78,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _renamePdf(PdfItem item) async {
-    final controller = TextEditingController(text: item.filename);
+    final baseName = item.filename.endsWith('.pdf')
+        ? item.filename.substring(0, item.filename.length - 4)
+        : item.filename;
+    final controller = TextEditingController(text: baseName);
     final newName = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(

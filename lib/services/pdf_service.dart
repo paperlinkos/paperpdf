@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -14,6 +13,12 @@ enum PdfQualityPreset {
   highQuality, // Optimized for maximum readability (~450-800 KB / page)
 }
 
+enum PdfPageOrientation {
+  auto, // Chooses best orientation per page based on image aspect ratio
+  portrait, // Forces vertical A4 page format
+  landscape, // Forces horizontal A4 page format
+}
+
 class PdfService {
   final StorageService _storageService = StorageService();
   final ImageService _imageService = ImageService();
@@ -24,6 +29,17 @@ class PdfService {
         return 'Standard (Smaller File Size)';
       case PdfQualityPreset.highQuality:
         return 'High Quality (Max Readability)';
+    }
+  }
+
+  static String getOrientationLabel(PdfPageOrientation orientation) {
+    switch (orientation) {
+      case PdfPageOrientation.auto:
+        return 'Auto (Best fit per page)';
+      case PdfPageOrientation.portrait:
+        return 'Portrait';
+      case PdfPageOrientation.landscape:
+        return 'Landscape';
     }
   }
 
@@ -47,7 +63,9 @@ class PdfService {
   Future<PdfItem> createPdf({
     required List<PageItem> pages,
     PdfQualityPreset qualityPreset = PdfQualityPreset.standard,
+    PdfPageOrientation orientation = PdfPageOrientation.auto,
     String? customFilename,
+    bool overwriteExisting = false,
   }) async {
     if (pages.isEmpty) {
       throw Exception('Cannot create PDF with 0 pages.');
@@ -77,9 +95,26 @@ class PdfService {
       final imageBytes = await imageFile.readAsBytes();
       final pdfImage = pw.MemoryImage(imageBytes);
 
+      PdfPageFormat pageFormat;
+      switch (orientation) {
+        case PdfPageOrientation.portrait:
+          pageFormat = PdfPageFormat.a4;
+          break;
+        case PdfPageOrientation.landscape:
+          pageFormat = PdfPageFormat.a4.landscape;
+          break;
+        case PdfPageOrientation.auto:
+          if (pdfImage.width != null && pdfImage.height != null && pdfImage.width! > pdfImage.height!) {
+            pageFormat = PdfPageFormat.a4.landscape;
+          } else {
+            pageFormat = PdfPageFormat.a4;
+          }
+          break;
+      }
+
       pdf.addPage(
         pw.Page(
-          pageFormat: PdfPageFormat.a4,
+          pageFormat: pageFormat,
           margin: const pw.EdgeInsets.all(12),
           build: (pw.Context context) {
             return pw.Center(
@@ -95,7 +130,17 @@ class PdfService {
 
     final targetDir = await _storageService.getAppPdfDirectory();
     final now = DateTime.now();
-    final filename = customFilename ?? await _storageService.generateFilename(now);
+
+    String filename;
+    if (customFilename != null && customFilename.trim().isNotEmpty) {
+      filename = _storageService.sanitizeFilename(customFilename);
+      if (!overwriteExisting && await _storageService.pdfFileExists(filename)) {
+        filename = await _storageService.getUniqueFilename(filename);
+      }
+    } else {
+      filename = await _storageService.generateFilename(now);
+    }
+
     final pdfFilePath = p.join(targetDir.path, filename);
 
     final outputFile = File(pdfFilePath);

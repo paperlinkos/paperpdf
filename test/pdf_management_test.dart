@@ -41,6 +41,39 @@ void main() {
       expect(filename, endsWith('.pdf'));
     });
 
+    test('sanitizeFilename removes invalid characters and handles .pdf extension cleanly', () {
+      final storage = StorageService();
+
+      expect(storage.sanitizeFilename('My Invoice'), 'My Invoice.pdf');
+      expect(storage.sanitizeFilename('My Invoice.pdf'), 'My Invoice.pdf');
+      expect(storage.sanitizeFilename('My Invoice.PDF'), 'My Invoice.PDF');
+      expect(storage.sanitizeFilename('My Invoice.pdf.pdf'), 'My Invoice.pdf');
+      expect(storage.sanitizeFilename('Report: 2026/10? <test>*|'), 'Report_ 2026_10_ _test___.pdf');
+      expect(storage.sanitizeFilename('   '), '');
+    });
+
+    test('pdfFileExists and getUniqueFilename resolve duplicate filenames', () async {
+      final storage = StorageService();
+      final pdfDir = await storage.getAppPdfDirectory();
+
+      final file1 = File('${pdfDir.path}/Contract.pdf');
+      await file1.writeAsString('contract content');
+
+      expect(await storage.pdfFileExists('Contract.pdf'), isTrue);
+      expect(await storage.pdfFileExists('Contract'), isTrue);
+      expect(await storage.pdfFileExists('Contract.PDF'), isTrue);
+      expect(await storage.pdfFileExists('NonExistent.pdf'), isFalse);
+
+      final unique1 = await storage.getUniqueFilename('Contract.pdf');
+      expect(unique1, 'Contract (1).pdf');
+
+      final file2 = File('${pdfDir.path}/Contract (1).pdf');
+      await file2.writeAsString('contract 1 content');
+
+      final unique2 = await storage.getUniqueFilename('Contract');
+      expect(unique2, 'Contract (2).pdf');
+    });
+
     test('renamePdfItem renames physical file and updates metadata', () async {
       final storage = StorageService();
       final pdfDir = await storage.getAppPdfDirectory();
@@ -68,6 +101,27 @@ void main() {
 
       final recent = await storage.getRecentPdfs();
       expect(recent.first.filename, 'PaperLink_Receipt_2026-10-08.pdf');
+    });
+
+    test('renamePdfItem resolves duplicate name by producing unique filename', () async {
+      final storage = StorageService();
+      final pdfDir = await storage.getAppPdfDirectory();
+
+      final file1 = File('${pdfDir.path}/DocA.pdf');
+      await file1.writeAsString('doc a');
+      final file2 = File('${pdfDir.path}/DocB.pdf');
+      await file2.writeAsString('doc b');
+
+      final itemA = PdfItem(id: 'a', filename: 'DocA.pdf', path: file1.path, createdAt: DateTime.now(), pageCount: 1, fileSizeBytes: 5);
+      final itemB = PdfItem(id: 'b', filename: 'DocB.pdf', path: file2.path, createdAt: DateTime.now(), pageCount: 1, fileSizeBytes: 5);
+
+      await storage.savePdfItem(itemA);
+      await storage.savePdfItem(itemB);
+
+      final renamedB = await storage.renamePdfItem('b', 'DocA.pdf');
+      expect(renamedB, isNotNull);
+      expect(renamedB!.filename, 'DocA (1).pdf');
+      expect(File(renamedB.path).existsSync(), isTrue);
     });
 
     test('deletePdfItem deletes physical file and metadata', () async {
